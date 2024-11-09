@@ -4,22 +4,43 @@ import time
 import argparse
 from pathlib import Path
 
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, abort
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers.polling import PollingObserver  # Changed import
+from watchdog.observers.polling import PollingObserver
 
 DEBOUNCE_DELAY_SECONDS = 1
+
+def find_index_file(directory, requested_path):
+    """
+    Look for index.html in the requested directory path
+    """
+    # Construct the full filesystem path
+    full_path = Path(directory) / requested_path.lstrip('/')
+    
+    # Check if there's an index.html in this directory
+    index_path = full_path / 'index.html'
+    if index_path.is_file():
+        # Return the path relative to the static directory
+        return str(Path(requested_path) / 'index.html')
+    
+    return None
 
 def create_app(output_dir):
     app = Flask(__name__, static_folder=output_dir)
 
-    @app.route('/')
-    def serve_index():
-        return send_from_directory(app.static_folder, 'index.html')
-
+    @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
     def serve_file(path):
-        return send_from_directory(app.static_folder, path)
+        # First try to serve the exact file requested
+        try:
+            return send_from_directory(app.static_folder, path)
+        except:
+            # If the exact file doesn't exist, look for index.html
+            index_path = find_index_file(app.static_folder, path)
+            if index_path:
+                return send_from_directory(app.static_folder, index_path)
+            else:
+                abort(404)
 
     return app
 
@@ -62,8 +83,9 @@ if __name__ == "__main__":
     server_thread.start()
 
     event_handler = ChangeHandler(args.build_command)
-    observer = PollingObserver()  # Changed to PollingObserver
+    observer = PollingObserver()
     observer.schedule(event_handler, path=input_dir, recursive=True)
+    observer.schedule(event_handler, path=Path(__file__).parent, recursive=True)
     observer.start()
 
     try:
